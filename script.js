@@ -13,7 +13,7 @@ const firebaseConfig = {
   appId: "1:397741200880:web:a2eb60b15378c614383935"
 };
 
-// Inisialisasi Aplikasi Firebase & Database Reference
+// Inisialisasi Aplikasi Firebase & Database Reference (Menggunakan library compat di index.html)
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const kontakRef = db.ref("kontak");
@@ -21,38 +21,22 @@ const kontakRef = db.ref("kontak");
 // Variabel lokal penyimpan data kontak yang sinkron dengan Firebase
 let kontak = [];
 
-// ================= VALIDATOR UTIL SYSTEM (ANTI-ERROR) =================
-function validasiFormatNomor(nomor) {
-    // 1. Hapus semua karakter selain angka (seperti +, -, spasi)
-    let cleaned = nomor.replace(/\D/g, '');
-    
-    // 2. Jika nomor diawali dengan '0', ubah menjadi '62'
-    if (cleaned.startsWith('0')) {
-        cleaned = '62' + cleaned.slice(1);
-    }
-    
-    // 3. Jika nomor langsung diawali '8', tambahkan '62' di depannya
-    if (cleaned.startsWith('8')) {
-        cleaned = '62' + cleaned;
-    }
-    
-    return cleaned;
-}
-
 // Mendengarkan perubahan data secara langsung dari Firebase Realtime Server
 kontakRef.on("value", (snapshot) => {
     const data = snapshot.val();
     kontak = [];
     
     if (data) {
+        // Mengubah struktur object Firebase (Key-Value) ke Array lokal untuk kompatibilitas sistem lama
         Object.keys(data).forEach((key) => {
             kontak.push({
-                id: key, 
+                id: key, // Menyimpan id firebase untuk keperluan penghapusan data spesifik
                 nama: data[key].nama,
                 nomor: data[key].nomor
             });
         });
     }
+    // Render otomatis ke komponen UI select dropdown setiap kali data berubah
     renderKontak();
 });
 
@@ -84,7 +68,7 @@ function handleLogout() {
     checkAuth();
 }
 
-// ================= CONTACT SYSTEM (FIREBASE + VALIDATED) =================
+// ================= CONTACT SYSTEM (FIREBASE INTEGRATED) =================
 function renderKontak() {
     const select = document.getElementById("kontakSelect");
     if (!select) return;
@@ -101,17 +85,13 @@ function tambahKontak() {
     let n = document.getElementById("namaKontak").value.trim();
     let num = document.getElementById("nomorKontak").value.trim();
     if (!n || !num) return alert("Lengkapi nama dan nomor!");
+    if(num.startsWith("0")) num = "62" + num.slice(1);
+    if(num.startsWith("8")) num = "62" + num;
 
-    // Bersihkan format nomor sebelum masuk ke Firebase
-    let nomorValid = validasiFormatNomor(num);
-
-    if (nomorValid.length < 10) {
-        return alert("Format nomor tidak valid atau terlalu pendek!");
-    }
-
+    // Menyimpan langsung data ke Firebase Server secara terpusat (Auto Push Unique ID)
     kontakRef.push({
         nama: n,
-        nomor: nomorValid
+        nomor: num
     }).then(() => {
         document.getElementById("namaKontak").value = "";
         document.getElementById("nomorKontak").value = "";
@@ -126,6 +106,7 @@ function hapusSatuKontak() {
     
     let kontakTerpilih = kontak[i];
     if (confirm(`Hapus kontak ${kontakTerpilih.nama} dari server?`)) {
+        // Menghapus data spesifik menggunakan ID unik Firebase
         db.ref("kontak/" + kontakTerpilih.id).remove()
         .then(() => {
             document.getElementById("nomor").value = "";
@@ -136,9 +117,9 @@ function hapusSatuKontak() {
     }
 }
 
-// Menghapus seluruh node 'kontak' di database Firebase
 function hapusSemuaKontak() {
     if (confirm("Hapus seluruh database kontak di cloud server? Tindakan ini tidak bisa dibatalkan.")) {
+        // Menghapus seluruh node 'kontak' di database Firebase
         kontakRef.remove()
         .then(() => {
             document.getElementById("nomor").value = "";
@@ -157,57 +138,23 @@ function isiNomor() {
 function importCSV() {
     const f = document.getElementById("csvFile").files[0];
     if (!f) return alert("Pilih file CSV dulu!");
-    
-    // Aktifkan baris teks loading di area status dashboard utama
-    const st = document.getElementById("status");
-    if(st) st.innerText = "⏳ Sedang mengunggah kontak ke server cloud...";
-
     const r = new FileReader();
     r.onload = function(e) {
-        const rows = e.target.result.split(/\r?\n/);
-        
-        let uploadPromises = [];
-        let jumlahSukses = 0;
-
+        const rows = e.target.result.split("\n");
         rows.forEach(row => {
-            if (!row.trim()) return;
-
             let [nama, nomor] = row.split(",");
             if (nama && nomor) {
-                let namaClean = nama.trim();
-                let nomorValid = validasiFormatNomor(nomor.trim());
+                let val = nomor.trim();
+                if(val.startsWith("0")) val = "62" + val.slice(1);
                 
-                if (namaClean !== "" && nomorValid.length >= 10) {
-                    // Masukkan eksekusi push ke dalam antrean promise asynchronous
-                    let p = kontakRef.push({
-                        nama: namaClean,
-                        nomor: nomorValid
-                    }).then(() => {
-                        jumlahSukses++;
-                    });
-                    uploadPromises.push(p);
-                }
+                // Push setiap baris CSV langsung masuk antrean database Firebase
+                kontakRef.push({
+                    nama: nama.trim(),
+                    nomor: val
+                });
             }
         });
-
-        if (uploadPromises.length === 0) {
-            if(st) st.innerText = "";
-            document.getElementById("csvFile").value = "";
-            return alert("❌ Gagal! Tidak ada kontak valid yang ditemukan di file CSV.");
-        }
-
-        // Jalankan pelacakan sinkronisasi terpusat setelah semua antrean selesai diproses server
-        Promise.all(uploadPromises)
-            .then(() => {
-                if(st) st.innerText = "✅ Impor kontak CSV berhasil!";
-                document.getElementById("csvFile").value = "";
-                alert(`🎉 Sukses! ${jumlahSukses} kontak telah berhasil diverifikasi dan tersimpan di database server Firebase.`);
-            })
-            .catch((err) => {
-                if(st) st.innerText = "❌ Gagal sinkronisasi server.";
-                console.error(err);
-                alert("Terjadi kesalahan saat menyinkronkan data ke server: " + err.message);
-            });
+        alert("Import database CSV selesai dikirim ke server cloud.");
     };
     r.readAsText(f);
 }
@@ -237,12 +184,6 @@ async function kirim() {
     const fl = fInput ? fInput.files[0] : null;
 
     if (!no) return alert("Nomor tujuan wajib diisi!");
-    
-    // Bersihkan input manual kolom nomor utama sebelum ditembak ke API Fonnte
-    const nomorTujuanValid = validasiFormatNomor(no);
-    if (nomorTujuanValid.length < 10) {
-        return alert("Nomor tujuan tidak valid atau salah format!");
-    }
 
     bt.disabled = true;
     st.innerText = "⏳ Sedang memproses media...";
@@ -270,9 +211,7 @@ async function kirim() {
         let msgFull = upOk ? (pFinal + "\n\n" + mUrl) : pFinal;
         
         st.innerText = "📤 Mengirim pesan ke WhatsApp...";
-        
-        // Memastikan parameter target menggunakan nomor yang telah lolos validasi otomatis
-        let bdy = { target: nomorTujuanValid, message: msgFull };
+        let bdy = { target: no, message: msgFull };
         if (upOk) { bdy.url = mUrl; bdy.filename = fl.name; }
 
         let res = await fetch("https://api.fonnte.com/send", {
@@ -287,7 +226,7 @@ async function kirim() {
             await fetch("https://api.fonnte.com/send", {
                 method: "POST",
                 headers: { "Authorization": API_KEY_FONNTE, "Content-Type": "application/json" },
-                body: JSON.stringify({ target: nomorTujuanValid, message: pFinal + "\n\n" + mUrl })
+                body: JSON.stringify({ target: no, message: pFinal + "\n\n" + mUrl })
             });
             st.innerText = "⚠️ Media tertunda, link terkirim.";
         } else if (d.status) {

@@ -2,13 +2,50 @@ const CLOUD_NAME = "dkisbfx29";
 const UPLOAD_PRESET = "ml_default";
 const API_KEY_FONNTE = "hMYEWfgYSGSw6KK81TN6";
 
+// ================= KUNCI FIREBASE CONFIG RESMI ANDA =================
+const firebaseConfig = {
+  apiKey: "AIzaSyDejqBNDkHJQKkOBxWzlgOZzoYdz4XMvsI",
+  authDomain: "wa-sender-v4-pro.firebaseapp.com",
+  databaseURL: "https://wa-sender-v4-pro-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "wa-sender-v4-pro",
+  storageBucket: "wa-sender-v4-pro.firebasestorage.app",
+  messagingSenderId: "397741200880",
+  appId: "1:397741200880:web:a2eb60b15378c614383935"
+};
+
+// Inisialisasi Aplikasi Firebase & Database Reference (Menggunakan library compat di index.html)
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const kontakRef = db.ref("kontak");
+
+// Variabel lokal penyimpan data kontak yang sinkron dengan Firebase
+let kontak = [];
+
+// Mendengarkan perubahan data secara langsung dari Firebase Realtime Server
+kontakRef.on("value", (snapshot) => {
+    const data = snapshot.val();
+    kontak = [];
+    
+    if (data) {
+        // Mengubah struktur object Firebase (Key-Value) ke Array lokal untuk kompatibilitas sistem lama
+        Object.keys(data).forEach((key) => {
+            kontak.push({
+                id: key, // Menyimpan id firebase untuk keperluan penghapusan data spesifik
+                nama: data[key].nama,
+                nomor: data[key].nomor
+            });
+        });
+    }
+    // Render otomatis ke komponen UI select dropdown setiap kali data berubah
+    renderKontak();
+});
+
 // ================= AUTH SYSTEM =================
 function checkAuth() {
     const isLogin = localStorage.getItem("login");
     if (isLogin === "true") {
         document.getElementById("loginPage").classList.add("hidden-section");
         document.getElementById("mainDashboard").classList.remove("hidden-section");
-        renderKontak();
     } else {
         document.getElementById("loginPage").classList.remove("hidden-section");
         document.getElementById("mainDashboard").classList.add("hidden-section");
@@ -31,9 +68,7 @@ function handleLogout() {
     checkAuth();
 }
 
-// ================= CONTACT SYSTEM =================
-let kontak = JSON.parse(localStorage.getItem("kontak")) || [];
-
+// ================= CONTACT SYSTEM (FIREBASE INTEGRATED) =================
 function renderKontak() {
     const select = document.getElementById("kontakSelect");
     if (!select) return;
@@ -52,33 +87,47 @@ function tambahKontak() {
     if (!n || !num) return alert("Lengkapi nama dan nomor!");
     if(num.startsWith("0")) num = "62" + num.slice(1);
     if(num.startsWith("8")) num = "62" + num;
-    kontak.push({ nama: n, nomor: num });
-    saveAndRefresh();
-    document.getElementById("namaKontak").value = "";
-    document.getElementById("nomorKontak").value = "";
+
+    // Menyimpan langsung data ke Firebase Server secara terpusat (Auto Push Unique ID)
+    kontakRef.push({
+        nama: n,
+        nomor: num
+    }).then(() => {
+        document.getElementById("namaKontak").value = "";
+        document.getElementById("nomorKontak").value = "";
+    }).catch((err) => {
+        alert("Gagal menyimpan ke server: " + err.message);
+    });
 }
 
 function hapusSatuKontak() {
     let i = document.getElementById("kontakSelect").value;
     if (i === "") return alert("Pilih kontak yang ingin dihapus!");
-    if (confirm(`Hapus kontak ${kontak[i].nama}?`)) {
-        kontak.splice(i, 1);
-        saveAndRefresh();
-        document.getElementById("nomor").value = "";
+    
+    let kontakTerpilih = kontak[i];
+    if (confirm(`Hapus kontak ${kontakTerpilih.nama} dari server?`)) {
+        // Menghapus data spesifik menggunakan ID unik Firebase
+        db.ref("kontak/" + kontakTerpilih.id).remove()
+        .then(() => {
+            document.getElementById("nomor").value = "";
+        })
+        .catch((err) => {
+            alert("Gagal menghapus data di server: " + err.message);
+        });
     }
 }
 
 function hapusSemuaKontak() {
-    if (confirm("Hapus seluruh database kontak? Tindakan ini tidak bisa dibatalkan.")) {
-        kontak = [];
-        saveAndRefresh();
-        document.getElementById("nomor").value = "";
+    if (confirm("Hapus seluruh database kontak di cloud server? Tindakan ini tidak bisa dibatalkan.")) {
+        // Menghapus seluruh node 'kontak' di database Firebase
+        kontakRef.remove()
+        .then(() => {
+            document.getElementById("nomor").value = "";
+        })
+        .catch((err) => {
+            alert("Gagal mengosongkan database server: " + err.message);
+        });
     }
-}
-
-function saveAndRefresh() {
-    localStorage.setItem("kontak", JSON.stringify(kontak));
-    renderKontak();
 }
 
 function isiNomor() {
@@ -97,10 +146,15 @@ function importCSV() {
             if (nama && nomor) {
                 let val = nomor.trim();
                 if(val.startsWith("0")) val = "62" + val.slice(1);
-                kontak.push({ nama: nama.trim(), nomor: val });
+                
+                // Push setiap baris CSV langsung masuk antrean database Firebase
+                kontakRef.push({
+                    nama: nama.trim(),
+                    nomor: val
+                });
             }
         });
-        saveAndRefresh();
+        alert("Import database CSV selesai dikirim ke server cloud.");
     };
     r.readAsText(f);
 }
@@ -154,7 +208,6 @@ async function kirim() {
             if (rC.secure_url) { mUrl = rC.secure_url; upOk = true; }
         }
 
-        // Pengiriman Teks + Link (Sesuai Struktur Project Lama Anda)
         let msgFull = upOk ? (pFinal + "\n\n" + mUrl) : pFinal;
         
         st.innerText = "📤 Mengirim pesan ke WhatsApp...";
@@ -170,7 +223,6 @@ async function kirim() {
         let d = await res.json();
 
         if ((!d.status || !upOk) && mUrl) {
-            // Fallback Link jika media asli gagal tampil
             await fetch("https://api.fonnte.com/send", {
                 method: "POST",
                 headers: { "Authorization": API_KEY_FONNTE, "Content-Type": "application/json" },
@@ -192,5 +244,5 @@ async function kirim() {
     }
 }
 
-// Jalankan autentikasi saat file pertama kali dimuat
+// Jalankan pengecekan status masuk admin sistem
 checkAuth();

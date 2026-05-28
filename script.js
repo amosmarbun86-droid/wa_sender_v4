@@ -161,10 +161,10 @@ function renderBalonChat(nomor) {
         bubbleContainer.appendChild(wrapper);
     });
 
-    // Maksa scroll otomatis container langsung turun menjangkau baris paling bawah (pesan terbaru)
+    // OPTIMASI SCROLL: Penyesuaian waktu tunda (100ms) untuk memastikan DOM selesai merender list panjang sebelum digulir penuh ke bawah
     setTimeout(() => {
         bubbleContainer.scrollTop = bubbleContainer.scrollHeight;
-    }, 30);
+    }, 100);
 }
 // =============================================================================================
 

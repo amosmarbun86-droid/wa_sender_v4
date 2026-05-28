@@ -119,21 +119,6 @@ logRef.on("value", (snapshot) => {
     }
 });
 
-// FUNGSI UNTUK MEMBUKA ROOM PERCAKAPAN
-function bukaRuangChat(nomor, nama) {
-    nomorChatAktif = nomor;
-    
-    document.getElementById("activeChatName").innerText = nama;
-    document.getElementById("activeChatNumber").innerText = `+${nomor}`;
-    
-    // Auto-fill form input utama "Nomor Tujuan" di atas agar mempermudah pengetikan balasan
-    if(document.getElementById("nomor")) {
-        document.getElementById("nomor").value = nomor;
-    }
-
-    renderBalonChat(nomor);
-}
-
 // FUNGSI UNTUK MERENDER GELEMBUNG BALON CHAT (BUBBLE CHAT)
 function renderBalonChat(nomor) {
     const bubbleContainer = document.getElementById("chatBubbleContainer");
@@ -430,7 +415,10 @@ function hapusSemuaLog() {
         logRef.remove().catch(err => alert("Gagal membersihkan log: " + err.message));
     }
 }
-// ================= FITUR TAMBAHAN: BALAS LANGSUNG DARI OBROLAN =================
+
+// =============================================================================================
+// ================= FITUR TAMBAHAN: BALAS LANGSUNG & KONTROL MOBILE ===========================
+// =============================================================================================
 
 // Mengontrol munculnya kolom input balasan ketika ruang chat dipilih
 function bukaRuangChat(nomor, nama) {
@@ -451,6 +439,46 @@ function bukaRuangChat(nomor, nama) {
     }
 
     renderBalonChat(nomor);
+
+    // AUTOMATIC SMOOTH SCROLL KE AREA CHAT JIKA DIAKSES VIA SMARTPHONE / MOBILE LAYAR KECIL
+    if (window.innerWidth < 768) {
+        setTimeout(() => {
+            const elHeader = document.getElementById("activeChatName");
+            if (elHeader) {
+                elHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }, 80);
+    }
+}
+
+// FUNGSI BACK: MEMBANTU USER HP UNTUK KEMBALI KE DAFTAR KOTAK MASUK UTAMA DI ATAS
+function kembaliKeDaftarChat() {
+    nomorChatAktif = null;
+    
+    document.getElementById("activeChatName").innerText = "Pilih obrolan...";
+    document.getElementById("activeChatNumber").innerText = "";
+    
+    // Sembunyikan kembali area balas cepat
+    const replyArea = document.getElementById("quickReplyArea");
+    if (replyArea) {
+        replyArea.classList.add("hidden");
+    }
+
+    // Kembalikan isi container balon chat ke petunjuk default
+    const bubbleContainer = document.getElementById("chatBubbleContainer");
+    if (bubbleContainer) {
+        bubbleContainer.innerHTML = `
+            <div class="text-center text-slate-500 italic text-xs my-auto">
+                Klik salah satu daftar chat di sebelah kiri untuk melihat detail histori pesan masuk dan balasan.
+            </div>
+        `;
+    }
+
+    // Scroll layar secara halus ke atas menjangkau panel List Kotak Masuk kembali
+    const listTitle = document.querySelector("#chatListContainer");
+    if (listTitle) {
+        listTitle.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
 }
 
 // Fungsi eksekusi pengiriman pesan dari Quick Reply Box
@@ -481,7 +509,7 @@ async function kirimBalasanLangsung() {
         if(vid) vid.style.display = "none";
     }
 
-    // 3. Panggil fungsi kirim() orisinal 1400-line milik Anda untuk menembak API Fonnte & Push ke Firebase
+    // 3. Panggil fungsi kirim() orisinal milik Anda untuk menembak API Fonnte & Push ke Firebase
     await kirim();
 
     // 4. Reset & bersihkan kembali form balasan cepat setelah selesai dikirim
@@ -500,7 +528,6 @@ function handleQuickReplyKeyPress(event) {
         kirimBalasanLangsung();
     }
 }
-
 
 // Jalankan pengecekan status masuk admin sistem
 checkAuth();

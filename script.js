@@ -22,6 +22,10 @@ const logRef = db.ref("logs"); // Reference baru untuk menyimpan riwayat pesan
 // Variabel lokal penyimpan data kontak yang sinkron dengan Firebase
 let kontak = [];
 
+// Variabel global baru untuk mengelola state tampilan room chat interaktif
+let nomorChatAktif = null;
+let semuaLogData = {};
+
 // Mendengarkan perubahan data secara langsung dari Firebase Realtime Server
 kontakRef.on("value", (snapshot) => {
     const data = snapshot.val();
@@ -45,69 +49,139 @@ kontakRef.on("value", (snapshot) => {
     }
 });
 
-// Mendengarkan data log history pengiriman secara live dari Firebase
+// ================= MUTASI LOGIKA SEKSI RIWAYAT MENJADI ROOM CHAT INTERAKTIF =================
 logRef.on("value", (snapshot) => {
     const data = snapshot.val();
-    const tbody = document.getElementById("logTableBody");
-    if (!tbody) return;
+    const listContainer = document.getElementById("chatListContainer");
+    if (!listContainer) return;
     
-    tbody.innerHTML = "";
-    
+    listContainer.innerHTML = "";
+    semuaLogData = {}; // Reset container penampung data lokal lokal
+
     if (!data) {
-        tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500 italic">Belum ada riwayat pengiriman.</td></tr>`;
+        listContainer.innerHTML = `<div class="p-4 text-center text-slate-500 italic text-xs">Belum ada histori obrolan.</div>`;
         return;
     }
 
-    const logList = [];
+    // 1. KELOMPOKKAN PESAN BERDASARKAN DIGIT ANGKA NOMOR HP (SENDER ATAU RECEIVER)
     Object.keys(data).forEach(key => {
-        logList.push({ id: key, ...data[key] });
+        const item = data[key];
+        if (!item.tujuan) return;
+        const nomorHP = item.tujuan.replace(/\D/g, ''); // Proteksi ambil karakter angka saja
+        
+        if (!semuaLogData[nomorHP]) {
+            semuaLogData[nomorHP] = [];
+        }
+        semuaLogData[nomorHP].push(item);
     });
-    logList.reverse(); // Data terbaru selalu di atas
 
-    logList.forEach(log => {
-        let tr = document.createElement("tr");
-        tr.className = "hover:bg-white/5 transition-colors";
+    // 2. RENDER DAFTAR KOTAK MASUK DI PANEL SEBELAH KIRI
+    Object.keys(semuaLogData).forEach(nomor => {
+        const historiPesan = semuaLogData[nomor];
+        const pesanTerakhir = historiPesan[historiPesan.length - 1]; // Mengambil baris pesan paling baru
         
-        // --- PROSES COCOKKAN NOMOR DENGAN NAMA KONTAK ---
-        let tampilanTujuan = log.tujuan;
-        
-        // Jika data adalah pesan masuk, coba cari namanya di database lokal aplikasi
-        if (log.status.includes("📥") || log.status === "📥 PESAN MASUK") {
-            // Bersihkan format nomor untuk memastikan kecocokan (hilangkan spasi/karakter aneh)
-            const nomorBersih = log.tujuan.replace(/\D/g, '');
-            
-            // Cari di array kontak bawaan aplikasi Anda
-            const kontakDitemukan = kontak.find(k => k.nomor.replace(/\D/g, '') === nomorBersih);
-            
-            if (kontakDitemukan) {
-                // Jika ketemu di database Kontak, ubah tampilannya jadi: Nama (Nomor)
-                tampilanTujuan = `${kontakDitemukan.nama} (${log.tujuan})`;
-            }
-        }
-        // -------------------------------------------------
+        // Proses pencarian nama kontak di database internal
+        const kontakDitemukan = kontak.find(k => k.nomor.replace(/\D/g, '') === nomor);
+        const namaTampilan = kontakDitemukan ? kontakDitemukan.nama : `+${nomor}`;
 
-        // Pembeda warna badge status
-        let statusBadge = "";
-        if (log.status.includes("✅") || log.status === "Berhasil") {
-            statusBadge = `<span class="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-[10px] font-bold">SUKSES</span>`;
-        } else if (log.status.includes("⚠️") || log.status.includes("Tertunda")) {
-            statusBadge = `<span class="px-2 py-1 bg-yellow-500/10 text-yellow-400 rounded-lg text-[10px] font-bold">TERTUNDA</span>`;
-        } else if (log.status.includes("📥") || log.status === "📥 PESAN MASUK") {
-            statusBadge = `<span class="px-2 py-1 bg-blue-500/10 text-blue-400 rounded-lg text-[10px] font-bold">PESAN MASUK</span>`;
-        } else {
-            statusBadge = `<span class="px-2 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-bold">GAGAL</span>`;
+        // Deteksi arah indikator pesan terakhir (Masuk atau Keluar)
+        const isPesanMasuk = pesanTerakhir.status.includes("📥") || pesanTerakhir.status === "📥 PESAN MASUK";
+        
+        const divItem = document.createElement("div");
+        divItem.className = `p-3 flex flex-col gap-1 cursor-pointer transition-colors hover:bg-white/5 ${nomorChatAktif === nomor ? 'bg-white/10 hover:bg-white/10' : ''}`;
+        
+        // Pasang fungsi trigger klik untuk membuka isi room chat gelembung di sebelah kanan
+        divItem.onclick = () => bukaRuangChat(nomor, namaTampilan);
+
+        // Memotong tampilan jam dari string format waktu asli (misal "28-05-2026 17:06:26" diambil "17:06")
+        let jamSaja = "";
+        if (pesanTerakhir.waktu && pesanTerakhir.waktu.includes(" ")) {
+            const partWaktu = pesanTerakhir.waktu.split(" ")[1];
+            jamSaja = partWaktu.substring(0, 5);
         }
 
-        // Tampilkan data ke tabel (menggunakan variabel tampilanTujuan yang baru)
-        tr.innerHTML = `
-            <td class="p-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${log.waktu}</td>
-            <td class="p-3 font-semibold text-slate-300">${tampilanTujuan}</td>
-            <td class="p-3 text-slate-400 max-w-xs truncate" title="${log.pesan}">${log.pesan}</td>
-            <td class="p-3">${statusBadge}</td>
+        divItem.innerHTML = `
+            <div class="flex justify-between items-center">
+                <span class="font-semibold text-xs ${kontakDitemukan ? 'text-green-400' : 'text-slate-300'} truncate max-w-[140px]">${namaTampilan}</span>
+                <span class="text-[9px] text-slate-500 font-mono">${jamSaja}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate flex items-center gap-1">
+                <span class="text-[10px]">${isPesanMasuk ? '📥' : '📤'}</span>
+                <span class="truncate flex-1">${pesanTerakhir.pesan || '-'}</span>
+            </div>
         `;
-        tbody.appendChild(tr);
+        listContainer.appendChild(divItem);
     });
+
+    // Jika user sedang aktif membuka satu room obrolan, lakukan re-render otomatis agar chat mengalir live
+    if (nomorChatAktif && semuaLogData[nomorChatAktif]) {
+        renderBalonChat(nomorChatAktif);
+    }
 });
+
+// FUNGSI UNTUK MEMBUKA ROOM PERCAKAPAN
+function bukaRuangChat(nomor, nama) {
+    nomorChatAktif = nomor;
+    
+    document.getElementById("activeChatName").innerText = nama;
+    document.getElementById("activeChatNumber").innerText = `+${nomor}`;
+    
+    // Auto-fill form input utama "Nomor Tujuan" di atas agar mempermudah pengetikan balasan
+    if(document.getElementById("nomor")) {
+        document.getElementById("nomor").value = nomor;
+    }
+
+    renderBalonChat(nomor);
+}
+
+// FUNGSI UNTUK MERENDER GELEMBUNG BALON CHAT (BUBBLE CHAT)
+function renderBalonChat(nomor) {
+    const bubbleContainer = document.getElementById("chatBubbleContainer");
+    if (!bubbleContainer) return;
+
+    bubbleContainer.innerHTML = "";
+    const listPesan = semuaLogData[nomor] || [];
+
+    listPesan.forEach(msg => {
+        const isPesanMasuk = msg.status.includes("📥") || msg.status === "📥 PESAN MASUK";
+        
+        const wrapper = document.createElement("div");
+        // Kondisional Layout Posisi: Kiri untuk pesan masuk, Kanan untuk pesan balasan keluar
+        wrapper.className = `flex w-full ${isPesanMasuk ? 'justify-start' : 'justify-end'}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = `max-w-[80%] p-3 rounded-2xl text-xs shadow-md flex flex-col gap-1 ${
+            isPesanMasuk 
+            ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700/50' 
+            : 'bg-green-600 text-white rounded-tr-none'
+        }`;
+
+        // Set status centang indikator balasan
+        let centangStatus = "✓";
+        if (msg.status.includes("✅") || msg.status === "✅ Berhasil") {
+            centangStatus = "✓✓";
+        } else if (msg.status.includes("❌") || msg.status.includes("Gagal")) {
+            centangStatus = "⚠️";
+        }
+
+        bubble.innerHTML = `
+            <div class="break-words leading-relaxed text-[11px]">${msg.pesan || ''}</div>
+            <div class="text-[8px] self-end mt-1 font-mono opacity-60 flex items-center gap-1 select-none">
+                <span>${msg.waktu}</span>
+                <span>${isPesanMasuk ? '' : centangStatus}</span>
+            </div>
+        `;
+
+        wrapper.appendChild(bubble);
+        bubbleContainer.appendChild(wrapper);
+    });
+
+    // Maksa scroll otomatis container langsung turun menjangkau baris paling bawah (pesan terbaru)
+    setTimeout(() => {
+        bubbleContainer.scrollTop = bubbleContainer.scrollHeight;
+    }, 30);
+}
+// =============================================================================================
 
 
 
